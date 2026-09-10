@@ -161,6 +161,59 @@ def load_config():
         "ntfy_token", ""
     )
 
+    # === AI 智能分析配置（支持多 provider 依次兜底）===
+    ai_section = config_data.get("ai", {}) or {}
+    env_ai_enabled = os.environ.get("AI_ENABLED", "").strip().lower()
+    config["AI_ENABLED"] = (
+        env_ai_enabled == "true"
+        if env_ai_enabled
+        else bool(ai_section.get("enabled", False))
+    )
+
+    # 单 provider 写法（顶层字段，环境变量优先）作为第一个候选
+    single_base_url = os.environ.get("AI_BASE_URL", "").strip() or ai_section.get(
+        "base_url", ""
+    )
+    single_api_key = os.environ.get("AI_API_KEY", "").strip() or ai_section.get(
+        "api_key", ""
+    )
+    single_model = os.environ.get("AI_MODEL", "").strip() or ai_section.get("model", "")
+
+    ai_providers: List[Dict[str, str]] = []
+    if single_base_url and single_api_key:
+        ai_providers.append(
+            {
+                "name": "默认",
+                "base_url": single_base_url,
+                "api_key": single_api_key,
+                "model": single_model or "deepseek-chat",
+            }
+        )
+
+    # 多 provider 写法：ai.providers 列表，按顺序追加为兜底候选
+    for idx, provider in enumerate(ai_section.get("providers", []) or []):
+        base_url = str(provider.get("base_url", "")).strip()
+        api_key = str(provider.get("api_key", "")).strip()
+        if not base_url or not api_key:
+            continue
+        ai_providers.append(
+            {
+                "name": str(provider.get("name", "")).strip() or f"备用{idx + 1}",
+                "base_url": base_url,
+                "api_key": api_key,
+                "model": str(provider.get("model", "")).strip()
+                or single_model
+                or "deepseek-chat",
+            }
+        )
+
+    config["AI_PROVIDERS"] = ai_providers
+    config["AI_MAX_NEWS_IN_PROMPT"] = ai_section.get("max_news_in_prompt", 80)
+    config["AI_TIMEOUT"] = ai_section.get("timeout", 120)
+    config["AI_MAX_TOKENS"] = ai_section.get("max_tokens", 1500)
+    config["AI_TEMPERATURE"] = ai_section.get("temperature", 0.3)
+    config["AI_PROMPT"] = ai_section.get("prompt", "")
+
     # 输出配置来源信息
     notification_sources = []
     if config["FEISHU_WEBHOOK_URL"]:
@@ -2121,7 +2174,7 @@ def render_html_content(
     if report_data["failed_ids"]:
         html += """
                 <div class="error-section">
-                    <div class="error-title">⚠️ 请求失败的平台</div>
+                    <div class="error-title">警告: 请求失败的平台</div>
                     <ul class="error-list">"""
         for id_value in report_data["failed_ids"]:
             html += f'<li class="error-item">{html_escape(id_value)}</li>'
@@ -2700,7 +2753,7 @@ def render_feishu_content(
         if text_content and "暂无匹配" not in text_content:
             text_content += f"\n{CONFIG['FEISHU_MESSAGE_SEPARATOR']}\n\n"
 
-        text_content += "⚠️ **数据获取失败的平台：**\n\n"
+        text_content += "警告: **数据获取失败的平台：**\n\n"
         for i, id_value in enumerate(report_data["failed_ids"], 1):
             text_content += f"  • <font color='red'>{id_value}</font>\n"
 
@@ -2796,7 +2849,7 @@ def render_dingtalk_content(
         if text_content and "暂无匹配" not in text_content:
             text_content += f"\n---\n\n"
 
-        text_content += "⚠️ **数据获取失败的平台：**\n\n"
+        text_content += "警告: **数据获取失败的平台：**\n\n"
         for i, id_value in enumerate(report_data["failed_ids"], 1):
             text_content += f"  • **{id_value}**\n"
 
@@ -3224,15 +3277,15 @@ def split_content_into_batches(
     if report_data["failed_ids"]:
         failed_header = ""
         if format_type == "wework":
-            failed_header = f"\n\n\n\n⚠️ **数据获取失败的平台：**\n\n"
+            failed_header = f"\n\n\n\n警告: **数据获取失败的平台：**\n\n"
         elif format_type == "telegram":
-            failed_header = f"\n\n⚠️ 数据获取失败的平台：\n\n"
+            failed_header = f"\n\n警告: 数据获取失败的平台：\n\n"
         elif format_type == "ntfy":
-            failed_header = f"\n\n⚠️ **数据获取失败的平台：**\n\n"
+            failed_header = f"\n\n警告: **数据获取失败的平台：**\n\n"
         elif format_type == "feishu":
-            failed_header = f"\n{CONFIG['FEISHU_MESSAGE_SEPARATOR']}\n\n⚠️ **数据获取失败的平台：**\n\n"
+            failed_header = f"\n{CONFIG['FEISHU_MESSAGE_SEPARATOR']}\n\n警告: **数据获取失败的平台：**\n\n"
         elif format_type == "dingtalk":
-            failed_header = f"\n---\n\n⚠️ **数据获取失败的平台：**\n\n"
+            failed_header = f"\n---\n\n警告: **数据获取失败的平台：**\n\n"
 
         test_content = current_batch + failed_header
         if (
@@ -3275,6 +3328,127 @@ def split_content_into_batches(
     return batches
 
 
+def _escape_html_text(text: str) -> str:
+    """转义 HTML 特殊字符，避免 AI 返回内容破坏邮件排版"""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _request_llm(
+    provider: Dict[str, str], system_prompt: str, user_prompt: str
+) -> Tuple[Optional[str], str]:
+    """请求单个 LLM provider，返回 (分析结果, 失败原因)"""
+    headers = {
+        "Authorization": f"Bearer {provider.get('api_key', '')}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": provider.get("model", ""),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": float(CONFIG.get("AI_TEMPERATURE", 0.3)),
+        "max_tokens": int(CONFIG.get("AI_MAX_TOKENS", 1500)),
+    }
+    base_url = str(provider.get("base_url", "")).rstrip("/")
+    url = f"{base_url}/chat/completions"
+
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=int(CONFIG.get("AI_TIMEOUT", 120)),
+        )
+        if response.status_code != 200:
+            return None, f"状态码 {response.status_code}: {response.text[:120]}"
+
+        data = response.json()
+        choices = data.get("choices") or []
+        content = ""
+        if choices:
+            content = (choices[0].get("message", {}) or {}).get("content", "") or ""
+        content = content.strip()
+
+        if not content:
+            return None, "返回结果为空"
+        return content, ""
+    except Exception as e:
+        return None, f"调用异常: {e}"
+
+
+def generate_ai_summary(stats: List[Dict]) -> Tuple[Optional[str], str]:
+    """调用大模型对当日热点做解读，支持多 provider 依次兜底，返回 (分析结果, 状态说明)"""
+    if not CONFIG.get("AI_ENABLED"):
+        return None, "AI 分析未启用"
+
+    providers = CONFIG.get("AI_PROVIDERS", []) or []
+    if not providers:
+        print("警告: AI 分析已启用但未配置任何 provider（缺少 api_key），将跳过 AI 分析")
+        return None, "未配置 api_key"
+
+    max_news = int(CONFIG.get("AI_MAX_NEWS_IN_PROMPT", 80))
+    seen: set = set()
+    lines: List[str] = []
+    done = False
+    for group in stats:
+        if done:
+            break
+        for source_id, title_list in group.get("titles", {}).items():
+            for item in title_list:
+                title = item.get("title", "")
+                if not title or title in seen:
+                    continue
+                seen.add(title)
+                source_name = item.get("source_name", source_id)
+                lines.append(f"- [{source_name}] {title}")
+                if len(lines) >= max_news:
+                    done = True
+                    break
+            if done:
+                break
+
+    if not lines:
+        return None, "没有可分析的新闻"
+
+    system_prompt = (
+        "你是一名资深的中文新闻分析师，擅长从海量热点标题中提炼核心信息与趋势。"
+    )
+    news_text = "\n".join(lines)
+    user_prompt = (
+        str(CONFIG.get("AI_PROMPT", "")).strip()
+        or (
+            "以下是今天抓取到的热点新闻标题（格式为 [来源平台] 标题）：\n\n"
+            f"{news_text}\n\n"
+            "请你用简体中文给出一份精炼的分析，要求：\n"
+            "1. 先给一段 100 字左右的今日概览，概括整体热点走向；\n"
+            "2. 然后列出 3-5 个重点关注事项，每条一句话说明是什么、为什么值得关注；\n"
+            "3. 最后给一段趋势判断，指出哪些话题在持续升温或新出现。\n"
+            "注意：只输出分析内容，不要完整复述新闻列表。"
+        )
+    )
+
+    total = len(providers)
+    failures: List[str] = []
+    for index, provider in enumerate(providers, start=1):
+        provider_name = provider.get("name", f"provider{index}")
+        print(
+            f"正在进行 AI 分析（{index}/{total} 尝试 {provider_name}），"
+            f"共 {len(lines)} 条新闻..."
+        )
+
+        content, error = _request_llm(provider, system_prompt, user_prompt)
+        if content:
+            print(f"AI 分析完成（{provider_name}）")
+            return content, f"成功 via {provider_name}"
+
+        failures.append(f"{provider_name}: {error}")
+        print(f"{provider_name} 失败：{error}，尝试下一个 provider...")
+
+    print(f"警告: 全部 {total} 个 AI provider 均失败，本次推送不含 AI 分析")
+    return None, "; ".join(failures)
+
+
 def send_to_notifications(
     stats: List[Dict],
     failed_ids: Optional[List] = None,
@@ -3285,6 +3459,7 @@ def send_to_notifications(
     proxy_url: Optional[str] = None,
     mode: str = "daily",
     html_file_path: Optional[str] = None,
+    ai_summary: Optional[str] = None,
 ) -> Dict[str, bool]:
     """发送数据到多个通知平台"""
     results = {}
@@ -3379,6 +3554,7 @@ def send_to_notifications(
             html_file_path,
             email_smtp_server,
             email_smtp_port,
+            ai_summary,
         )
 
     if not results:
@@ -3709,6 +3885,7 @@ def send_to_email(
     html_file_path: str,
     custom_smtp_server: Optional[str] = None,
     custom_smtp_port: Optional[int] = None,
+    ai_summary: Optional[str] = None,
 ) -> bool:
     """发送邮件通知"""
     try:
@@ -3719,6 +3896,22 @@ def send_to_email(
         print(f"使用HTML文件: {html_file_path}")
         with open(html_file_path, "r", encoding="utf-8") as f:
             html_content = f.read()
+
+        if ai_summary:
+            escaped_summary = _escape_html_text(ai_summary).replace("\n", "<br>")
+            ai_block = (
+                '<div style="margin:16px 0;padding:14px 18px;'
+                "background:#f6f8fa;border-left:4px solid #1a73e8;"
+                'border-radius:6px;line-height:1.7;">'
+                '<div style="font-size:16px;font-weight:bold;'
+                'color:#1a73e8;margin-bottom:8px;">AI 智能分析</div>'
+                f'<div style="color:#24292f;">{escaped_summary}</div>'
+                "</div>"
+            )
+            if "</body>" in html_content:
+                html_content = html_content.replace("</body>", f"{ai_block}</body>", 1)
+            else:
+                html_content += ai_block
 
         domain = from_email.split("@")[-1].lower()
 
@@ -3771,6 +3964,8 @@ NEWS_TRENDS 热点分析报告
 
 请使用支持HTML的邮件客户端查看完整报告内容。
         """
+        if ai_summary:
+            text_content += f"\n【AI 智能分析】\n{ai_summary}\n"
         text_part = MIMEText(text_content, "plain", "utf-8")
         msg.attach(text_part)
 
@@ -4230,6 +4425,9 @@ class NewsAnalyzer:
             and has_notification
             and self._has_valid_content(stats, new_titles)
         ):
+            ai_summary, ai_status = generate_ai_summary(stats)
+            if ai_summary:
+                print(f"本次推送将附带 AI 分析（{ai_status}）")
             send_to_notifications(
                 stats,
                 failed_ids or [],
@@ -4240,10 +4438,11 @@ class NewsAnalyzer:
                 self.proxy_url,
                 mode=mode,
                 html_file_path=html_file_path,
+                ai_summary=ai_summary,
             )
             return True
         elif CONFIG["ENABLE_NOTIFICATION"] and not has_notification:
-            print("⚠️ 警告：通知功能已启用但未配置任何通知渠道，将跳过通知发送")
+            print("警告: 警告：通知功能已启用但未配置任何通知渠道，将跳过通知发送")
         elif not CONFIG["ENABLE_NOTIFICATION"]:
             print(f"跳过{report_type}通知：通知功能已禁用")
         elif (
@@ -4437,7 +4636,7 @@ class NewsAnalyzer:
                         html_file_path=html_file,
                     )
             else:
-                print("❌ 严重错误：无法读取刚保存的数据文件")
+                print("错误: 严重错误：无法读取刚保存的数据文件")
                 raise RuntimeError("数据一致性检查失败：保存后立即读取失败")
         else:
             title_info = self._prepare_current_title_info(results, time_info)
@@ -4517,13 +4716,13 @@ def main():
         analyzer = NewsAnalyzer()
         analyzer.run()
     except FileNotFoundError as e:
-        print(f"❌ 配置文件错误: {e}")
+        print(f"错误: 配置文件错误: {e}")
         print("\n请确保以下文件存在:")
         print("  • config/config.yaml")
         print("  • config/frequency_words.txt")
         print("\n参考项目文档进行正确配置")
     except Exception as e:
-        print(f"❌ 程序运行错误: {e}")
+        print(f"错误: 程序运行错误: {e}")
         raise
 
 

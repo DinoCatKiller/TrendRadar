@@ -1,0 +1,6 @@
+# 密钥文件：绝不提交到 git
+config/secrets.env
+
+# Python 缓存
+__pycache__/
+*.pyc

@@ -25,7 +25,7 @@ crawler:
 
 # 推送模式选择
 report:
-  mode: "incremental" # 可选: "daily"|"incremental"|"current"
+  mode: "daily" # 可选: "daily"|"incremental"|"current"
   rank_threshold: 5 # 排名高亮阈值
 
 notification:
@@ -46,7 +46,7 @@ notification:
     # 注意：GitHub Actions 执行时间不稳定，时间范围建议至少留足 2 小时
     # 如果想要精准的定时推送，建议使用 Docker 部署在个人服务器上
     time_range:
-      start: "09:00"  # 推送时间窗口开始（北京时间）
+      start: "06:00"  # 推送时间窗口开始（北京时间）
       end: "23:00"    # 推送时间窗口结束（北京时间）
     once_per_day: true  # 每天在时间窗口内只推送一次，如果 false，则窗口内每次执行都推送
     push_record_retention_days: 7  # 推送记录保留天数
@@ -60,9 +60,9 @@ notification:
     wework_url: "" # 企业微信机器人的 webhook URL
     telegram_bot_token: "" # Telegram Bot Token
     telegram_chat_id: "" # Telegram Chat ID
-    email_from: "" # 发件人邮箱地址
-    email_password: "" # 发件人邮箱密码或授权码
-    email_to: "" # 收件人邮箱地址，多个收件人用逗号分隔
+    email_from: "2864305010@qq.com" # 发件人邮箱地址
+    email_password: "" # 发件人邮箱授权码 —— 已移至环境变量 EMAIL_PASSWORD，禁止在此填写
+    email_to: "2864305010@qq.com" # 收件人邮箱地址，多个收件人用逗号分隔
     email_smtp_server: "" # SMTP服务器地址（可选，留空自动识别）
     email_smtp_port: "" # SMTP端口（可选，留空自动识别）
     ntfy_server_url: "https://ntfy.sh" # ntfy服务器地址，默认使用公共服务，可改为自托管地址
@@ -77,45 +77,45 @@ weight:
 
 # name 可以定义任意名称，只具有显示作用，即使项目运行了几天后，忽然改掉 name 也不会影响代码的正常运行
 platforms:
-  # === 综合新闻媒体类 ===
-  - id: "toutiao"
-    name: "今日头条"
-  - id: "baidu"
-    name: "百度热搜"
-  - id: "thepaper"
-    name: "澎湃新闻"
-  - id: "ifeng"
-    name: "凤凰网"
-  - id: "cankaoxiaoxi"
-    name: "参考消息"
-  - id: "sputniknewscn"
-    name: "卫星通讯社"
-  - id: "zaobao"
-    name: "联合早报"
-  - id: "mktnews"
-    name: "MKT新闻"
-  - id: "kaopu"
-    name: "靠谱新闻"
+  # # === 综合新闻媒体类 ===
+  # - id: "toutiao"
+  #   name: "今日头条"
+  # - id: "baidu"
+  #   name: "百度热搜"
+  # - id: "thepaper"
+  #   name: "澎湃新闻"
+  # - id: "ifeng"
+  #   name: "凤凰网"
+  # - id: "cankaoxiaoxi"
+  #   name: "参考消息"
+  # - id: "sputniknewscn"
+  #   name: "卫星通讯社"
+  # - id: "zaobao"
+  #   name: "联合早报"
+  # - id: "mktnews"
+  #   name: "MKT新闻"
+  # - id: "kaopu"
+  #   name: "靠谱新闻"
 
-  # === 财经投资类 ===
-  - id: "wallstreetcn-hot"
-    name: "华尔街见闻 最热"
-  # - id: "wallstreetcn-quick"
-  # name: "华尔街见闻 快讯"
-  - id: "wallstreetcn-news"
-    name: "华尔街见闻 最新"
-  - id: "cls-hot"
-    name: "财联社热门"
-  - id: "gelonghui"
-    name: "格隆汇"
-  - id: "xueqiu"
-    name: "雪球"
-  - id: "jin10"
-    name: "金十数据"
-  - id: "fastbull"
-    name: "快讯通"
+  # # === 财经投资类 ===
+  # - id: "wallstreetcn-hot"
+  #   name: "华尔街见闻 最热"
+  # # - id: "wallstreetcn-quick"
+  # # name: "华尔街见闻 快讯"
+  # - id: "wallstreetcn-news"
+  #   name: "华尔街见闻 最新"
+  # - id: "cls-hot"
+  #   name: "财联社热门"
+  # - id: "gelonghui"
+  #   name: "格隆汇"
+  # - id: "xueqiu"
+  #   name: "雪球"
+  # - id: "jin10"
+  #   name: "金十数据"
+  # - id: "fastbull"
+  #   name: "快讯通"
 
-  # === 社交/短视频/娱乐类 ===
+  # # === 社交/短视频/娱乐类 ===
   - id: "weibo"
     name: "微博"
   - id: "douyin"
@@ -126,8 +126,8 @@ platforms:
     name: "贴吧"
   - id: "zhihu"
     name: "知乎"
-  - id: "hupu"
-    name: "虎扑"
+  # - id: "hupu"
+  #   name: "虎扑"
 
   # === 科技类平台 ===
   - id: "ithome"
@@ -182,3 +182,43 @@ platforms:
   #   name: "36氪"           # 失败原因：接口可能已变更
   # - id: "linuxdo"
   #   name: "LinuxDo"        # 失败原因：接口可能已变更
+
+# ======================================================
+# AI 智能分析（自动把大模型解读写进推送邮件）
+# 支持所有 OpenAI 兼容接口；支持配置多个 provider 依次兜底
+#   （某个免费额度排队 / 报错 / 超时，会自动尝试下一个）
+# 常见预设：
+#   OpenAI     → https://api.openai.com/v1
+#   DeepSeek   → https://api.deepseek.com
+#   通义千问    → https://dashscope.aliyuncs.com/compatible-mode/v1
+#   Moonshot   → https://api.moonshot.cn/v1
+#   硅基流动    → https://api.siliconflow.cn/v1
+#   本地 Ollama → http://localhost:11434/v1
+# 安全提示：api_key 建议用环境变量 AI_API_KEY 传入，避免明文落盘
+# ======================================================
+ai:
+  enabled: true # 是否启用 AI 分析（关闭则邮件恢复为纯列表）
+
+  # --- 方式一：单个 provider（顶层字段，环境变量 AI_BASE_URL/AI_API_KEY/AI_MODEL 优先）---
+  base_url: "https://api.deepseek.com" # OpenAI 兼容接口地址
+  api_key: "" # ← 填你的 API 密钥
+  model: "deepseek-chat" # 模型名
+
+  # --- 方式二：多个 provider 兜底（推荐白嫖党用）---
+  # 按顺序依次尝试，直到某个成功；全部失败则本次推送不含 AI 分析。
+  # 注意：方式一若配了 key，会作为"默认"排在最前面，其后依次是下面的列表。
+  # providers:
+  #   - name: "硅基流动"
+  #     base_url: "https://api.siliconflow.cn/v1"
+  #     api_key: "sk-你的密钥2"
+  #     model: "Qwen/Qwen2.5-7B-Instruct"
+  #   - name: "Moonshot"
+  #     base_url: "https://api.moonshot.cn/v1"
+  #     api_key: "sk-你的密钥3"
+  #     model: "moonshot-v1-8k"
+
+  max_news_in_prompt: 80 # 最多把多少条新闻标题喂给模型
+  timeout: 120 # 单个 provider 请求超时（秒）
+  max_tokens: 1500 # 分析结果最大长度
+  temperature: 0.3 # 生成随机性，越小越稳定
+  prompt: "" # 可选：自定义分析指令，留空使用默认指令
