@@ -201,21 +201,22 @@ ai:
 
   # --- 方式一：单个 provider（顶层字段，环境变量 AI_BASE_URL/AI_API_KEY/AI_MODEL 优先）---
   base_url: "https://api.deepseek.com" # OpenAI 兼容接口地址
-  api_key: "" # ← 填你的 API 密钥
+  api_key: "" # 可填明文，更建议留空、用环境变量 AI_API_KEY
   model: "deepseek-chat" # 模型名
 
   # --- 方式二：多个 provider 兜底（推荐白嫖党用）---
   # 按顺序依次尝试，直到某个成功；全部失败则本次推送不含 AI 分析。
-  # 注意：方式一若配了 key，会作为"默认"排在最前面，其后依次是下面的列表。
-  # providers:
-  #   - name: "硅基流动"
-  #     base_url: "https://api.siliconflow.cn/v1"
-  #     api_key: "sk-你的密钥2"
-  #     model: "Qwen/Qwen2.5-7B-Instruct"
-  #   - name: "Moonshot"
-  #     base_url: "https://api.moonshot.cn/v1"
-  #     api_key: "sk-你的密钥3"
-  #     model: "moonshot-v1-8k"
+  # api_key 写成 env:环境变量名（密钥写在 config/secrets.env，不进 git）；
+  # 对应的环境变量若没设置，该 provider 会被自动跳过，不会报错。
+  providers:
+    - name: "硅基流动"
+      base_url: "https://api.siliconflow.cn/v1"
+      api_key: "env:SILICONFLOW_API_KEY"
+      model: "Qwen/Qwen2.5-7B-Instruct"
+    - name: "Moonshot"
+      base_url: "https://api.moonshot.cn/v1"
+      api_key: "env:MOONSHOT_API_KEY"
+      model: "moonshot-v1-8k"
 
   max_news_in_prompt: 80 # 最多把多少条新闻标题喂给模型
   timeout: 120 # 单个 provider 请求超时（秒）

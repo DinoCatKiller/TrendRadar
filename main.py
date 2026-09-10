@@ -52,6 +52,15 @@ SMTP_CONFIGS = {
 
 
 # === 配置管理 ===
+def _resolve_secret(value) -> str:
+    """解析密钥：支持 "env:环境变量名" 写法，从环境变量读取，避免密钥明文写进配置文件"""
+    text = str(value or "").strip()
+    if text.lower().startswith("env:"):
+        var_name = text[4:].strip()
+        return os.environ.get(var_name, "").strip()
+    return text
+
+
 def load_config():
     """加载配置文件"""
     config_path = os.environ.get("CONFIG_PATH", "config/config.yaml")
@@ -174,8 +183,8 @@ def load_config():
     single_base_url = os.environ.get("AI_BASE_URL", "").strip() or ai_section.get(
         "base_url", ""
     )
-    single_api_key = os.environ.get("AI_API_KEY", "").strip() or ai_section.get(
-        "api_key", ""
+    single_api_key = os.environ.get("AI_API_KEY", "").strip() or _resolve_secret(
+        ai_section.get("api_key", "")
     )
     single_model = os.environ.get("AI_MODEL", "").strip() or ai_section.get("model", "")
 
@@ -193,7 +202,7 @@ def load_config():
     # 多 provider 写法：ai.providers 列表，按顺序追加为兜底候选
     for idx, provider in enumerate(ai_section.get("providers", []) or []):
         base_url = str(provider.get("base_url", "")).strip()
-        api_key = str(provider.get("api_key", "")).strip()
+        api_key = _resolve_secret(provider.get("api_key", ""))
         if not base_url or not api_key:
             continue
         ai_providers.append(
