@@ -209,14 +209,14 @@ ai:
   # api_key 写成 env:环境变量名（密钥写在 config/secrets.env，不进 git）；
   # 对应的环境变量若没设置，该 provider 会被自动跳过，不会报错。
   providers:
-    - name: "硅基流动"
-      base_url: "https://api.siliconflow.cn/v1"
-      api_key: "env:SILICONFLOW_API_KEY"
-      model: "Qwen/Qwen2.5-7B-Instruct"
     - name: "Moonshot"
       base_url: "https://api.moonshot.cn/v1"
       api_key: "env:MOONSHOT_API_KEY"
       model: "moonshot-v1-8k"
+    - name: "ollama"
+      base_url: "https://ollama.com/v1"
+      api_key: "env:OLLAMA_API_KEY"
+      model: "gemma4:31b"
 
   max_news_in_prompt: 80 # 最多把多少条新闻标题喂给模型
   timeout: 120 # 单个 provider 请求超时（秒）
