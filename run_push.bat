@@ -8,4 +8,5 @@ if exist "config\secrets.env" (
     )
 )
 
+set PYTHONIOENCODING=utf-8
 "C:\Users\28643\.local\bin\uv.exe" --directory I:\TrendRadar run python main.py >> I:\TrendRadar\output\push.log 2>&1

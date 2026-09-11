@@ -120,6 +120,7 @@ def load_config():
             "HOTNESS_WEIGHT": config_data["weight"]["hotness_weight"],
         },
         "PLATFORMS": config_data["platforms"],
+        "RSS_FEEDS": config_data.get("rss_feeds", []) or [],
     }
 
     # 通知渠道配置（环境变量优先）
@@ -260,6 +261,25 @@ print("正在加载配置...")
 CONFIG = load_config()
 print(f"NEWS_TRENDS v{VERSION} 配置加载完成")
 print(f"监控平台数量: {len(CONFIG['PLATFORMS'])}")
+if CONFIG.get("RSS_FEEDS"):
+    print(f"RSS 订阅源数量: {len(CONFIG['RSS_FEEDS'])}")
+
+
+# === RSS 源工具 ===
+def get_rss_feed_id(feed: Dict) -> str:
+    """RSS 源的稳定 id：优先用配置里的 id，否则由名称 / 域名生成"""
+    if feed.get("id"):
+        return str(feed["id"]).strip()
+    raw = str(feed.get("name") or feed.get("url", ""))
+    slug = re.sub(r"[^0-9a-zA-Z]+", "_", raw).strip("_").lower()
+    return f"rss_{slug or 'feed'}"
+
+
+def get_monitored_source_ids() -> List[str]:
+    """全部监控源 id（热搜平台 + RSS 源），用于历史数据过滤与新增检测"""
+    ids = [platform["id"] for platform in CONFIG["PLATFORMS"]]
+    ids.extend(get_rss_feed_id(feed) for feed in CONFIG.get("RSS_FEEDS", []))
+    return ids
 
 
 # === 工具函数 ===
@@ -593,6 +613,70 @@ class DataFetcher:
                 time.sleep(actual_interval / 1000)
 
         print(f"成功: {list(results.keys())}, 失败: {failed_ids}")
+        return results, id_to_name, failed_ids
+
+    def fetch_rss_feed(self, url: str, max_entries: int = 30) -> Dict[str, Dict]:
+        """抓取并解析单个 RSS/Atom 源，返回与热搜同构的 items 结构"""
+        import feedparser
+
+        proxies = None
+        if self.proxy_url:
+            proxies = {"http": self.proxy_url, "https": self.proxy_url}
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+        }
+
+        response = requests.get(url, headers=headers, proxies=proxies, timeout=15)
+        response.raise_for_status()
+        parsed = feedparser.parse(response.content)
+
+        items: Dict[str, Dict] = {}
+        for index, entry in enumerate(parsed.entries[:max_entries], 1):
+            title = (entry.get("title") or "").strip()
+            if not title or title in items:
+                continue
+            link = (entry.get("link") or "").strip()
+            items[title] = {"ranks": [index], "url": link, "mobileUrl": link}
+        return items
+
+    def crawl_rss_feeds(
+        self,
+        feeds: List[Dict],
+        request_interval: int = CONFIG["REQUEST_INTERVAL"],
+    ) -> Tuple[Dict, Dict, List]:
+        """批量抓取 RSS 源，返回 (results, id_to_name, failed_ids)"""
+        results: Dict = {}
+        id_to_name: Dict = {}
+        failed_ids: List = []
+
+        for i, feed in enumerate(feeds):
+            url = str(feed.get("url", "")).strip()
+            if not url:
+                continue
+
+            feed_id = get_rss_feed_id(feed)
+            name = str(feed.get("name", "")).strip() or feed_id
+            id_to_name[feed_id] = name
+
+            try:
+                items = self.fetch_rss_feed(url)
+                if items:
+                    results[feed_id] = items
+                    print(f"获取 {name} 成功（{len(items)} 条）")
+                else:
+                    failed_ids.append(feed_id)
+                    print(f"获取 {name} 为空")
+            except Exception as e:
+                failed_ids.append(feed_id)
+                print(f"请求 RSS {name} 失败: {e}")
+
+            if i < len(feeds) - 1:
+                actual_interval = request_interval + random.randint(-10, 20)
+                actual_interval = max(50, actual_interval)
+                time.sleep(actual_interval / 1000)
+
         return results, id_to_name, failed_ids
 
 
@@ -3403,19 +3487,19 @@ def generate_ai_summary(stats: List[Dict]) -> Tuple[Optional[str], str]:
     for group in stats:
         if done:
             break
-        for source_id, title_list in group.get("titles", {}).items():
-            for item in title_list:
-                title = item.get("title", "")
-                if not title or title in seen:
-                    continue
-                seen.add(title)
-                source_name = item.get("source_name", source_id)
-                lines.append(f"- [{source_name}] {title}")
-                if len(lines) >= max_news:
-                    done = True
-                    break
-            if done:
+        # group["titles"] 当前为 list（元素含 title/source_name），兼容旧 dict 结构
+        for item in (group.get("titles") or []):
+            title = item.get("title", "")
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            source_name = item.get("source_name", "")
+            lines.append(f"- [{source_name}] {title}")
+            if len(lines) >= max_news:
+                done = True
                 break
+        if done:
+            break
 
     if not lines:
         return None, "没有可分析的新闻"
@@ -4323,10 +4407,8 @@ class NewsAnalyzer:
     ) -> Optional[Tuple[Dict, Dict, Dict, Dict, List, List]]:
         """统一的数据加载和预处理，使用当前监控平台列表过滤历史数据"""
         try:
-            # 获取当前配置的监控平台ID列表
-            current_platform_ids = []
-            for platform in CONFIG["PLATFORMS"]:
-                current_platform_ids.append(platform["id"])
+            # 获取当前配置的监控源ID列表（热搜平台 + RSS）
+            current_platform_ids = get_monitored_source_ids()
 
             print(f"当前监控平台: {current_platform_ids}")
 
@@ -4583,6 +4665,17 @@ class NewsAnalyzer:
             ids, self.request_interval
         )
 
+        # 追加 RSS/Atom 官方源，与热搜平台合并后走同一套处理流程
+        rss_feeds = CONFIG.get("RSS_FEEDS", []) or []
+        if rss_feeds:
+            print(f"开始抓取 RSS 源，共 {len(rss_feeds)} 个")
+            rss_results, rss_id_to_name, rss_failed_ids = (
+                self.data_fetcher.crawl_rss_feeds(rss_feeds, self.request_interval)
+            )
+            results.update(rss_results)
+            id_to_name.update(rss_id_to_name)
+            failed_ids.extend(rss_failed_ids)
+
         title_file = save_titles_to_file(results, id_to_name, failed_ids)
         print(f"标题已保存到: {title_file}")
 
@@ -4592,8 +4685,8 @@ class NewsAnalyzer:
         self, mode_strategy: Dict, results: Dict, id_to_name: Dict, failed_ids: List
     ) -> Optional[str]:
         """执行模式特定逻辑"""
-        # 获取当前监控平台ID列表
-        current_platform_ids = [platform["id"] for platform in CONFIG["PLATFORMS"]]
+        # 获取当前监控源ID列表（热搜平台 + RSS）
+        current_platform_ids = get_monitored_source_ids()
 
         new_titles = detect_latest_new_titles(current_platform_ids)
         time_info = Path(save_titles_to_file(results, id_to_name, failed_ids)).stem
