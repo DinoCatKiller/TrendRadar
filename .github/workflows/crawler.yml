@@ -2,11 +2,14 @@ name: Hot News Crawler
 
 on:
   schedule:
-    # 我们使用的是 github 官方提供的资源来进行的推送，而每个账号的资源是限额的，为了不被官方判定为滥用而面临封号的风险，不建议比半小时更低
-    - cron: "0 * * * *" # 每小时整点运行一次(实际有偏差) 或者 "*/30 * * * *" (每半小时执行一次) 或者 "*/30 0-14 * * *"(每天早上 8 点到晚上 10 点期间，每半小时运行一次)
+    # cron 用 UTC 时间；北京时间 = UTC + 8
+    # 下面三次分别对应北京 08:00 / 08:30 / 09:00
+    # Actions 定时有延迟，多跑几次配合 config 的窗口 08:00-10:00 去重，确保晨报不漏
+    - cron: "0 0 * * *"
+    - cron: "30 0 * * *"
+    - cron: "0 1 * * *"
   workflow_dispatch:
 
-# 添加权限设置
 permissions:
   contents: write
 
@@ -30,21 +33,16 @@ jobs:
 
       - name: Verify required files
         run: |
-          echo "🔍 检查必需的配置文件..."
-
+          echo "Check config files..."
           if [ ! -f config/config.yaml ]; then
-            echo "❌ 错误: config/config.yaml 文件不存在"
-            echo "请参考项目文档创建配置文件"
+            echo "Error: config/config.yaml missing"
             exit 1
           fi
-
           if [ ! -f config/frequency_words.txt ]; then
-            echo "❌ 错误: config/frequency_words.txt 文件不存在"
-            echo "请参考项目文档创建频率词配置文件"
+            echo "Error: config/frequency_words.txt missing"
             exit 1
           fi
-
-          echo "✅ 配置文件检查通过"
+          echo "Config check passed"
 
       - name: Run crawler
         env:
@@ -61,6 +59,7 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           NTFY_SERVER_URL: ${{ secrets.NTFY_SERVER_URL }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           GITHUB_ACTIONS: true
         run: python main.py
 
@@ -69,14 +68,10 @@ jobs:
           git config --global user.name 'GitHub Actions'
           git config --global user.email 'actions@github.com'
           git add -A
-          # 检查是否有更改，有则提交
           if ! git diff --quiet || ! git diff --staged --quiet; then
             git commit -m "Auto update by GitHub Actions at $(TZ=Asia/Shanghai date)"
-            echo "📥 拉取远程最新更改..."
             git pull --rebase origin master
-            echo "🚀 推送更改到远程仓库..."
             git push origin master
-            echo "✅ 推送完成！"
           else
-            echo "✅ 没有检测到文件更改，跳过提交。"
+            echo "No changes, skip commit."
           fi
