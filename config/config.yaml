@@ -47,7 +47,7 @@ notification:
     # 如果想要精准的定时推送，建议使用 Docker 部署在个人服务器上
     time_range:
       start: "08:00"  # 推送时间窗口开始（北京时间）
-      end: "10:00"    # 推送时间窗口结束（北京时间，留 2 小时容错以适配 GitHub Actions 延迟）
+      end: "23:59"    # 推送时间窗口结束（北京时间，临时放宽用于联调，验证后改回 10:00）
     once_per_day: true  # 每天在时间窗口内只推送一次（即每天早 8 点晨报）
     push_record_retention_days: 7  # 推送记录保留天数
 
@@ -63,8 +63,8 @@ notification:
     email_from: "2864305010@qq.com" # 发件人邮箱地址
     email_password: "" # 发件人邮箱授权码 —— 已移至环境变量 EMAIL_PASSWORD，禁止在此填写
     email_to: "2864305010@qq.com" # 收件人邮箱地址，多个收件人用逗号分隔
-    email_smtp_server: "" # SMTP服务器地址（可选，留空自动识别）
-    email_smtp_port: "" # SMTP端口（可选，留空自动识别）
+    email_smtp_server: "smtp.qq.com" # SMTP服务器地址（可选，留空自动识别）
+    email_smtp_port: "465" # SMTP端口（465=SSL，587=STARTTLS；GitHub Actions 属境外 IP，QQ 用 465 更稳）
     ntfy_server_url: "https://ntfy.sh" # ntfy服务器地址，默认使用公共服务，可改为自托管地址
     ntfy_topic: "" # ntfy主题名称
     ntfy_token: "" # ntfy访问令牌（可选，用于私有主题）
