@@ -3426,6 +3426,34 @@ def _escape_html_text(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _render_ai_markdown(text: str) -> str:
+    """把 AI 返回的 Markdown 转成安全、可点击的 HTML：
+    - [文本](http(s)://...)  -> <a> 链接
+    - 裸 http(s):// 链接      -> <a> 链接（兜底）
+    - 其余内容转义 < > & 并把换行转 <br>
+    """
+    if not text:
+        return ""
+    escaped = _escape_html_text(text)
+
+    def _md_link(m):
+        link_text = m.group(1)
+        url = m.group(2).strip()
+        if not re.match(r"^https?://", url, re.IGNORECASE):
+            return m.group(0)
+        safe_url = url.replace('"', "&quot;")
+        return f'<a href="{safe_url}" target="_blank" rel="noopener">{link_text}</a>'
+
+    rendered = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", _md_link, escaped)
+    # 兜底：把不在 href=" 里的裸链接也转成 <a>
+    rendered = re.sub(
+        r'(?<!href=")(?<!"]\()(https?://[^\s<]+)',
+        lambda m: f'<a href="{m.group(1)}" target="_blank" rel="noopener">{m.group(1)}</a>',
+        rendered,
+    )
+    return rendered.replace("\n", "<br>")
+
+
 def _request_llm(
     provider: Dict[str, str], system_prompt: str, user_prompt: str
 ) -> Tuple[Optional[str], str]:
@@ -3470,56 +3498,49 @@ def _request_llm(
         return None, f"调用异常: {e}"
 
 
-def generate_ai_summary(stats: List[Dict]) -> Tuple[Optional[str], str]:
-    """调用大模型对当日热点做解读，支持多 provider 依次兜底，返回 (分析结果, 状态说明)"""
-    if not CONFIG.get("AI_ENABLED"):
-        return None, "AI 分析未启用"
-
-    providers = CONFIG.get("AI_PROVIDERS", []) or []
-    if not providers:
-        print("警告: AI 分析已启用但未配置任何 provider（缺少 api_key），将跳过 AI 分析")
-        return None, "未配置 api_key"
-
-    max_news = int(CONFIG.get("AI_MAX_NEWS_IN_PROMPT", 80))
+def _collect_news_entries(stats: List[Dict], max_news: int) -> List[Dict]:
+    """抽取新闻条目（去重），附带来源与链接，供 AI 分析并在结果里附上来源链接。"""
     seen: set = set()
-    lines: List[str] = []
-    done = False
+    entries: List[Dict] = []
     for group in stats:
-        if done:
-            break
-        # group["titles"] 当前为 list（元素含 title/source_name），兼容旧 dict 结构
         for item in (group.get("titles") or []):
             title = item.get("title", "")
             if not title or title in seen:
                 continue
             seen.add(title)
-            source_name = item.get("source_name", "")
-            lines.append(f"- [{source_name}] {title}")
-            if len(lines) >= max_news:
-                done = True
-                break
-        if done:
-            break
+            url = str(item.get("url") or item.get("mobile_url") or "").strip()
+            entries.append({
+                "source": item.get("source_name", ""),
+                "title": title,
+                "url": url,
+            })
+            if len(entries) >= max_news:
+                return entries
+    return entries
 
-    if not lines:
+
+def _build_news_prompt_text(entries: List[Dict]) -> str:
+    """把新闻条目拼成带编号与链接的文本，方便模型在分析时回溯来源。"""
+    lines = []
+    for i, e in enumerate(entries, 1):
+        line = f"{i}. [{e['source']}] {e['title']}"
+        if e["url"]:
+            line += f"\n   链接: {e['url']}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _run_ai_analysis(
+    news_lines: List[str], system_prompt: str, user_prompt: str
+) -> Tuple[Optional[str], str]:
+    """对给定新闻条目跑一次 AI，多 provider 依次兜底，返回 (分析结果, 状态说明)"""
+    if not news_lines:
         return None, "没有可分析的新闻"
 
-    system_prompt = (
-        "你是一名资深的中文新闻分析师，擅长从海量热点标题中提炼核心信息与趋势。"
-    )
-    news_text = "\n".join(lines)
-    user_prompt = (
-        str(CONFIG.get("AI_PROMPT", "")).strip()
-        or (
-            "以下是今天抓取到的热点新闻标题（格式为 [来源平台] 标题）：\n\n"
-            f"{news_text}\n\n"
-            "请你用简体中文给出一份精炼的分析，要求：\n"
-            "1. 先给一段 100 字左右的今日概览，概括整体热点走向；\n"
-            "2. 然后列出 3-5 个重点关注事项，每条一句话说明是什么、为什么值得关注；\n"
-            "3. 最后给一段趋势判断，指出哪些话题在持续升温或新出现。\n"
-            "注意：只输出分析内容，不要完整复述新闻列表。"
-        )
-    )
+    providers = CONFIG.get("AI_PROVIDERS", []) or []
+    if not providers:
+        print("警告: AI 分析已启用但未配置任何 provider（缺少 api_key），将跳过 AI 分析")
+        return None, "未配置 api_key"
 
     total = len(providers)
     failures: List[str] = []
@@ -3527,7 +3548,7 @@ def generate_ai_summary(stats: List[Dict]) -> Tuple[Optional[str], str]:
         provider_name = provider.get("name", f"provider{index}")
         print(
             f"正在进行 AI 分析（{index}/{total} 尝试 {provider_name}），"
-            f"共 {len(lines)} 条新闻..."
+            f"共 {len(news_lines)} 条新闻..."
         )
 
         content, error = _request_llm(provider, system_prompt, user_prompt)
@@ -3542,6 +3563,70 @@ def generate_ai_summary(stats: List[Dict]) -> Tuple[Optional[str], str]:
     return None, "; ".join(failures)
 
 
+def generate_ai_summary(stats: List[Dict]) -> Tuple[Optional[str], str]:
+    """第一部分：今日热点整体概览（原有能力，保持不变）"""
+    if not CONFIG.get("AI_ENABLED"):
+        return None, "AI 分析未启用"
+
+    max_news = int(CONFIG.get("AI_MAX_NEWS_IN_PROMPT", 80))
+    entries = _collect_news_entries(stats, max_news)
+    system_prompt = (
+        "你是一名资深的中文新闻分析师，擅长从海量热点标题中提炼核心信息与趋势。"
+    )
+    news_text = _build_news_prompt_text(entries)
+    link_instruction = (
+        "撰写时请尽量点名具体新闻标题，并在每条重点/解读末尾用 Markdown 链接格式"
+        "附上对应来源链接，例如：`（来源：[新闻标题](链接)）`。"
+        "链接请使用上面每条新闻给出的「链接:」地址，方便读者点击溯源。"
+    )
+    user_prompt = (
+        str(CONFIG.get("AI_PROMPT", "")).strip()
+        or (
+            "以下是今天抓取到的热点新闻标题（格式为 [来源平台] 标题，并附链接）：\n\n"
+            f"{news_text}\n\n"
+            "请你用简体中文给出一份精炼的分析，要求：\n"
+            "1. 先给一段 100 字左右的今日概览，概括整体热点走向；\n"
+            "2. 然后列出 3-5 个重点关注事项，每条一句话说明是什么、为什么值得关注；\n"
+            "3. 最后给一段趋势判断，指出哪些话题在持续升温或新出现。\n"
+            f"{link_instruction}\n"
+            "注意：只输出分析内容，不要完整复述新闻列表。"
+        )
+    )
+    return _run_ai_analysis(entries, system_prompt, user_prompt)
+
+
+def generate_ai_tech_analysis(stats: List[Dict]) -> Tuple[Optional[str], str]:
+    """第二部分：技术专栏内容分析，聚焦官方博客 / 科技动态的发布、更新与工程价值"""
+    if not CONFIG.get("AI_ENABLED"):
+        return None, "AI 分析未启用"
+
+    max_news = int(CONFIG.get("AI_MAX_NEWS_IN_PROMPT", 80))
+    entries = _collect_news_entries(stats, max_news)
+    system_prompt = (
+        "你是一名面向开发者的技术专栏作者，精通编程语言、框架、工具链与云原生生态，"
+        "善于把零散的版本发布与技术动态串成有工程价值的解读。"
+    )
+    news_text = _build_news_prompt_text(entries)
+    link_instruction = (
+        "撰写时请尽量点名具体新闻标题，并在每条解读末尾用 Markdown 链接格式"
+        "附上对应来源链接，例如：`（来源：[新闻标题](链接)）`。"
+        "链接请使用上面每条新闻给出的「链接:」地址，方便读者点击溯源。"
+    )
+    user_prompt = (
+        "以下是今天抓取到的热点新闻标题（格式为 [来源平台] 标题，并附链接），其中大量来自各技术官网的"
+        "官方博客、版本发布说明与更新日志：\n\n"
+        f"{news_text}\n\n"
+        "请从中筛选技术向内容，用简体中文写一篇「技术专栏」解读，要求：\n"
+        "1. 先一句话点明今天技术圈最值得关注的 1-2 个发布或变化；\n"
+        "2. 挑出 3-5 条具体技术动态逐条解读（如某语言/框架的新版本、重要 API 变更、工具更新），"
+        "说明它是什么、对开发者有什么实际影响、是否值得升级或尝鲜；\n"
+        "3. 若有教程、最佳实践或安全相关动态，单独提示。\n"
+        f"{link_instruction}\n"
+        "注意：聚焦技术内容，避免泛泛而谈社会热点；只输出解读，不要复述新闻列表。"
+    )
+    return _run_ai_analysis(entries, system_prompt, user_prompt)
+
+
 def send_to_notifications(
     stats: List[Dict],
     failed_ids: Optional[List] = None,
@@ -3553,6 +3638,7 @@ def send_to_notifications(
     mode: str = "daily",
     html_file_path: Optional[str] = None,
     ai_summary: Optional[str] = None,
+    ai_tech_summary: Optional[str] = None,
 ) -> Dict[str, bool]:
     """发送数据到多个通知平台"""
     results = {}
@@ -3648,6 +3734,7 @@ def send_to_notifications(
             email_smtp_server,
             email_smtp_port,
             ai_summary,
+            ai_tech_summary,
         )
 
     if not results:
@@ -3979,6 +4066,7 @@ def send_to_email(
     custom_smtp_server: Optional[str] = None,
     custom_smtp_port: Optional[int] = None,
     ai_summary: Optional[str] = None,
+    ai_tech_summary: Optional[str] = None,
 ) -> bool:
     """发送邮件通知"""
     try:
@@ -3991,7 +4079,7 @@ def send_to_email(
             html_content = f.read()
 
         if ai_summary:
-            escaped_summary = _escape_html_text(ai_summary).replace("\n", "<br>")
+            escaped_summary = _render_ai_markdown(ai_summary)
             ai_block = (
                 '<div style="margin:16px 0;padding:14px 18px;'
                 "background:#f6f8fa;border-left:4px solid #1a73e8;"
@@ -4005,6 +4093,22 @@ def send_to_email(
                 html_content = html_content.replace("</body>", f"{ai_block}</body>", 1)
             else:
                 html_content += ai_block
+
+        if ai_tech_summary:
+            escaped_tech = _render_ai_markdown(ai_tech_summary)
+            tech_block = (
+                '<div style="margin:16px 0;padding:14px 18px;'
+                "background:#f3faf3;border-left:4px solid #2da44e;"
+                'border-radius:6px;line-height:1.7;">'
+                '<div style="font-size:16px;font-weight:bold;'
+                'color:#2da44e;margin-bottom:8px;">技术专栏内容分析</div>'
+                f'<div style="color:#24292f;">{escaped_tech}</div>'
+                "</div>"
+            )
+            if "</body>" in html_content:
+                html_content = html_content.replace("</body>", f"{tech_block}</body>", 1)
+            else:
+                html_content += tech_block
 
         domain = from_email.split("@")[-1].lower()
 
@@ -4059,6 +4163,8 @@ NEWS_TRENDS 热点分析报告
         """
         if ai_summary:
             text_content += f"\n【AI 智能分析】\n{ai_summary}\n"
+        if ai_tech_summary:
+            text_content += f"\n【技术专栏内容分析】\n{ai_tech_summary}\n"
         text_part = MIMEText(text_content, "plain", "utf-8")
         msg.attach(text_part)
 
@@ -4517,8 +4623,11 @@ class NewsAnalyzer:
             and self._has_valid_content(stats, new_titles)
         ):
             ai_summary, ai_status = generate_ai_summary(stats)
+            ai_tech_summary, ai_tech_status = generate_ai_tech_analysis(stats)
             if ai_summary:
                 print(f"本次推送将附带 AI 分析（{ai_status}）")
+            if ai_tech_summary:
+                print(f"本次推送将附带技术专栏分析（{ai_tech_status}）")
             send_to_notifications(
                 stats,
                 failed_ids or [],
@@ -4530,6 +4639,7 @@ class NewsAnalyzer:
                 mode=mode,
                 html_file_path=html_file_path,
                 ai_summary=ai_summary,
+                ai_tech_summary=ai_tech_summary,
             )
             return True
         elif CONFIG["ENABLE_NOTIFICATION"] and not has_notification:
