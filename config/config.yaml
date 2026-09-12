@@ -46,9 +46,9 @@ notification:
     # 注意：GitHub Actions 执行时间不稳定，时间范围建议至少留足 2 小时
     # 如果想要精准的定时推送，建议使用 Docker 部署在个人服务器上
     time_range:
-      start: "06:00"  # 推送时间窗口开始（北京时间）
-      end: "23:00"    # 推送时间窗口结束（北京时间）
-    once_per_day: true  # 每天在时间窗口内只推送一次，如果 false，则窗口内每次执行都推送
+      start: "08:00"  # 推送时间窗口开始（北京时间）
+      end: "10:00"    # 推送时间窗口结束（北京时间，留 2 小时容错以适配 GitHub Actions 延迟）
+    once_per_day: true  # 每天在时间窗口内只推送一次（即每天早 8 点晨报）
     push_record_retention_days: 7  # 推送记录保留天数
 
   # 请务必妥善保管好 webhooks，不要公开
@@ -116,24 +116,24 @@ platforms:
   #   name: "快讯通"
 
   # # === 社交/短视频/娱乐类 ===
-  - id: "weibo"
-    name: "微博"
-  - id: "douyin"
-    name: "抖音"
+  # - id: "weibo"
+  #   name: "微博"
+  # - id: "douyin"
+  #   name: "抖音"
   - id: "bilibili-hot-search"
     name: "bilibili 热搜"
-  - id: "tieba"
-    name: "贴吧"
-  - id: "zhihu"
-    name: "知乎"
+  # - id: "tieba"
+  #   name: "贴吧"
+  # - id: "zhihu"
+  #   name: "知乎"
   # - id: "hupu"
   #   name: "虎扑"
 
   # === 科技类平台 ===
-  - id: "ithome"
-    name: "IT之家"
-  - id: "juejin"
-    name: "掘金"
+  # - id: "ithome"
+  #   name: "IT之家"
+  # - id: "juejin"
+  #   name: "掘金"
   - id: "github"
     name: "GitHub"
   - id: "hackernews"
@@ -142,14 +142,20 @@ platforms:
     name: "Solidot"
   - id: "v2ex"
     name: "V2EX"
-  - id: "nowcoder"
-    name: "牛客网"
+  # - id: "nowcoder"
+  #   name: "牛客网"
   - id: "pcbeta"
     name: "远景论坛"
   - id: "sspai"
     name: "少数派"
   - id: "producthunt"
     name: "ProductHunt"
+  - id: "freebuf"
+    name: "Freebuf 安全"
+  - id: "coolapk"
+    name: "酷安"
+  - id: "aihot"
+    name: "AI 热榜"
 
   # === 其他/工具类 ===
   - id: "chongbuluo"
@@ -184,6 +190,55 @@ platforms:
   #   name: "LinuxDo"        # 失败原因：接口可能已变更
 
 # ======================================================
+# RSS/Atom 官方源订阅（与上面的热搜平台合并监控）
+# 说明：直接填官方博客 / 发布公告的 feed 地址即可，id 可省略（自动生成 rss_xxx）
+#   抓取结果会与热搜平台合并，走同一套「关键词筛选 → 排序 → AI 分析 → 推送」逻辑
+#   匹配为大小写不敏感的子串匹配，英文标题里的 Rust / Python / Go 等拉丁词可直接命中
+# 提示：个别源可能已失效（日志会提示请求失败），不需要的直接删掉对应条目即可
+# ======================================================
+rss_feeds:
+  # --- 程序设计语言 ---
+  - name: "Python 官方博客"
+    url: "https://blog.python.org/feeds/posts/default"
+  - name: "Go 官方博客"
+    url: "https://go.dev/blog/feed.atom"
+  - name: "Rust 官方博客"
+    url: "https://blog.rust-lang.org/feed.xml"
+  - name: "Dart/Flutter 官方博客"
+    url: "https://medium.com/feed/dartlang"
+  # --- 前端 & UI ---
+  - name: "React 官方"
+    url: "https://react.dev/rss.xml"
+  - name: "Vue 官方博客"
+    url: "https://blog.vuejs.org/feed.rss"
+  - name: "Tailwind CSS 博客"
+    url: "https://tailwindcss.com/feeds/feed.xml"
+  - name: "Svelte 博客"
+    url: "https://svelte.dev/blog/rss.xml"
+  - name: "TanStack 官方博客"
+    url: "https://tanstack.com/rss.xml"
+  - name: "MDN 博客"
+    url: "https://developer.mozilla.org/en-US/blog/rss.xml"
+  # --- 开发工具 & 编辑器 ---
+  - name: "VS Code 更新"
+    url: "https://code.visualstudio.com/feed.xml"
+  - name: "Docker 博客"
+    url: "https://www.docker.com/blog/feed/"
+  - name: "Postman 博客"
+    url: "https://blog.postman.com/rss"
+  - name: "Kubernetes 博客"
+    url: "https://kubernetes.io/feed.xml"
+  # --- 云计算 & 基础设施 ---
+  - name: "AWS 新闻"
+    url: "https://aws.amazon.com/blogs/aws/feed/"
+  # --- 数据库 & 缓存 ---
+  - name: "Redis 博客"
+    url: "https://redis.io/feed/"
+  # --- 版本控制 & 协作 ---
+  - name: "GitHub 官方博客"
+    url: "https://github.blog/feed/"
+
+# ======================================================
 # AI 智能分析（自动把大模型解读写进推送邮件）
 # 支持所有 OpenAI 兼容接口；支持配置多个 provider 依次兜底
 #   （某个免费额度排队 / 报错 / 超时，会自动尝试下一个）
@@ -200,23 +255,23 @@ ai:
   enabled: true # 是否启用 AI 分析（关闭则邮件恢复为纯列表）
 
   # --- 方式一：单个 provider（顶层字段，环境变量 AI_BASE_URL/AI_API_KEY/AI_MODEL 优先）---
-  base_url: "https://api.deepseek.com" # OpenAI 兼容接口地址
-  api_key: "" # 可填明文，更建议留空、用环境变量 AI_API_KEY
-  model: "deepseek-chat" # 模型名
+  base_url: "https://ollama.com/v1" # Ollama Cloud 的 OpenAI 兼容接口（已验证可用）
+  api_key: "env:OLLAMA_API_KEY" # Ollama Cloud API Key（从环境变量/GitHub Secret 读取）
+  model: "gemma4:31b" # 主模型（已验证可正常返回内容，快速稳定）
 
   # --- 方式二：多个 provider 兜底（推荐白嫖党用）---
   # 按顺序依次尝试，直到某个成功；全部失败则本次推送不含 AI 分析。
   # api_key 写成 env:环境变量名（密钥写在 config/secrets.env，不进 git）；
   # 对应的环境变量若没设置，该 provider 会被自动跳过，不会报错。
   providers:
-    - name: "Moonshot"
-      base_url: "https://api.moonshot.cn/v1"
-      api_key: "env:MOONSHOT_API_KEY"
-      model: "moonshot-v1-8k"
+    # - name: "Moonshot"
+    #   base_url: "https://api.moonshot.cn/v1"
+    #   api_key: "env:MOONSHOT_API_KEY"
+    #   model: "moonshot-v1-8k"
     - name: "ollama"
-      base_url: "https://ollama.com/v1"
-      api_key: "env:OLLAMA_API_KEY"
-      model: "gemma4:31b"
+      base_url: "https://ollama.com/v1"  # Ollama Cloud 端点（与顶层一致）
+      api_key: "env:OLLAMA_API_KEY"  # Ollama Cloud API Key（从环境变量/GitHub Secret 读取）
+      model: "nemotron-3-ultra:cloud"  # 备选大模型（550B，较慢且易返回空；gemma4:31b 为主用）
 
   max_news_in_prompt: 80 # 最多把多少条新闻标题喂给模型
   timeout: 120 # 单个 provider 请求超时（秒）
