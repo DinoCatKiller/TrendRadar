@@ -5,7 +5,7 @@ on:
     # cron 用 UTC 时间；北京时间 = UTC + 8
     # 下面三次分别对应北京 08:00 / 08:30 / 09:00
     # Actions 定时有延迟，多跑几次配合 config 的窗口 08:00-10:00 去重，确保晨报不漏
-    - cron: "0 0 * * *"
+    - cron: "49 2 * * *"
     - cron: "30 0 * * *"
     - cron: "0 1 * * *"
   workflow_dispatch:
